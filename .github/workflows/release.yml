@@ -1,0 +1,98 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Windows (MSVC)
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            binary: hosts_updater_rs.exe
+            archive: zip
+
+          # macOS (x86_64, Rosetta-compatible)
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            binary: hosts_updater_rs
+            archive: zip
+
+          # Linux (glibc)
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            binary: hosts_updater_rs
+            archive: tar.gz
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Prepare binary
+        run: |
+          chmod +x target/${{ matrix.target }}/release/${{ matrix.binary }}
+
+      # ---------- Archive ----------
+      - name: Package (zip)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          Compress-Archive `
+            -Path target/${{ matrix.target }}/release/${{ matrix.binary }} `
+            -DestinationPath ${{ matrix.binary }}-${{ matrix.target }}.zip
+
+      - name: Package (tar.gz)
+        if: matrix.archive == 'tar.gz'
+        shell: bash
+        run: |
+          tar -czf \
+            ${{ matrix.binary }}-${{ matrix.target }}.tar.gz \
+            -C target/${{ matrix.target }}/release \
+            ${{ matrix.binary }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.binary }}-${{ matrix.target }}
+          path: |
+            ${{ matrix.binary }}-${{ matrix.target }}.${{ matrix.archive }}
+
+  release:
+    name: Publish Release
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Display structure
+        run: ls -R dist
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/**/*
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
